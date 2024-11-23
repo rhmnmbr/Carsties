@@ -4,6 +4,8 @@ using AuctionService.Services;
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using Polly;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,7 +33,7 @@ builder.Services.AddMassTransit(x =>
     x.UsingRabbitMq((context, cfg) =>
     {
         cfg.Host(builder.Configuration["RabbitMq:Host"],
-            builder.Configuration.GetValue<ushort>("RabbitMq:Port", 80), "/", host =>
+            builder.Configuration.GetValue<ushort>("RabbitMq:Port", 5672), "/", host =>
         {
             host.Username(builder.Configuration.GetValue("RabbitMq:Username", "guest"));
             host.Password(builder.Configuration.GetValue("RabbitMq:Password", "guest"));
@@ -60,14 +62,11 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapGrpcService<GrpcAuctionService>();
 
-try
-{
-    DbInitializer.InitDb(app);
-}
-catch (Exception e)
-{
-    Console.WriteLine(e);
-}
+var retryPolicy = Policy
+    .Handle<NpgsqlException>()
+    .WaitAndRetry(5, retryAttempt => TimeSpan.FromSeconds(5));
+
+retryPolicy.ExecuteAndCapture(() => DbInitializer.InitDb(app));
 
 app.Run();
 
